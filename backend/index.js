@@ -12,7 +12,11 @@ connectDB();
 
 const app = express();
 
-app.use(cors()); // allows all origins
+// app.use(cors()); // allows all origins
+
+app.use(cors({
+  origin: ['http://localhost:5173', 'https://symb-tech.onrender.com']
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
