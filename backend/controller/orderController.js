@@ -1,7 +1,9 @@
 import { validationResult } from "express-validator";
 import Order from "../models/Order.js";
 
-//    small helper to handle validation
+/* ==================================
+   Helper: Validation Checker
+================================== */
 const checkValidation = (req, res) => {
   const errors = validationResult(req);
 
@@ -16,8 +18,8 @@ const checkValidation = (req, res) => {
 };
 
 /* ==================================
-   GET all orders
-   supports filtering by:
+   GET All Orders
+   Supports filtering by:
    - isPaid
    - maxDistance
 ================================== */
@@ -26,18 +28,19 @@ export const getAllOrders = async (req, res, next) => {
     const { isPaid, maxDistance } = req.query;
     const filter = {};
 
-    // filter by payment status
+    // Filter by payment status
     if (isPaid !== undefined && isPaid !== "") {
       if (isPaid !== "true" && isPaid !== "false") {
-        return res
-          .status(400)
-          .json({ success: false, error: 'isPaid must be "true" or "false"' });
+        return res.status(400).json({
+          success: false,
+          error: 'isPaid must be "true" or "false"',
+        });
       }
 
       filter.isPaid = isPaid === "true";
     }
 
-    // filter by distance
+    // Filter by distance
     if (maxDistance !== undefined && maxDistance !== "") {
       const distance = parseFloat(maxDistance);
 
@@ -58,30 +61,39 @@ export const getAllOrders = async (req, res, next) => {
       count: orders.length,
       orders,
     });
+
   } catch (err) {
     next(err);
   }
 };
 
-//    GET single order by ID
+/* ==================================
+   GET Single Order
+================================== */
 export const getOrderById = async (req, res, next) => {
   try {
     const order = await Order.findById(req.params.id);
 
     if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        error: "Order not found",
+      });
     }
 
-    res.status(200).json({ success: true, order });
+    res.status(200).json({
+      success: true,
+      order,
+    });
+
   } catch (err) {
     next(err);
   }
 };
 
-
-//    CREATE new order
+/* ==================================
+   CREATE New Order
+================================== */
 export const createOrder = async (req, res, next) => {
   try {
     if (!checkValidation(req, res)) return;
@@ -91,7 +103,7 @@ export const createOrder = async (req, res, next) => {
 
     const normalizedId = orderId.trim().toUpperCase();
 
-    // prevent duplicate orderId
+    // Prevent duplicate orderId
     const existingOrder = await Order.findOne({ orderId: normalizedId });
 
     if (existingOrder) {
@@ -107,20 +119,22 @@ export const createOrder = async (req, res, next) => {
       itemCount: Number(itemCount),
       isPaid: isPaid ?? false,
       deliveryDistance: Number(deliveryDistance),
+      isAssigned: false, // explicitly set
     });
 
     res.status(201).json({
       success: true,
       order: newOrder,
     });
+
   } catch (err) {
     next(err);
   }
 };
 
-
-  // UPDATE order (partial update)
-
+/* ==================================
+   UPDATE Order (Partial)
+================================== */
 export const updateOrder = async (req, res, next) => {
   try {
     const allowedFields = [
@@ -133,14 +147,13 @@ export const updateOrder = async (req, res, next) => {
 
     const updates = {};
 
-    // only allow specific fields to be updated
     allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) {
         updates[field] = req.body[field];
       }
     });
 
-    if (Object.keys(updates).length === 0) {
+    if (!Object.keys(updates).length) {
       return res.status(400).json({
         success: false,
         error: "No valid fields provided for update",
@@ -154,49 +167,52 @@ export const updateOrder = async (req, res, next) => {
     );
 
     if (!updatedOrder) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        error: "Order not found",
+      });
     }
 
     res.status(200).json({
       success: true,
       order: updatedOrder,
     });
-  } catch (err) {
-    next(err);
-  }
-};
 
-
- //  DELETE order
-
-export const deleteOrder = async (req, res, next) => {
-  try {
-    const deletedOrder = await Order.findByIdAndDelete(req.params.id);
-
-    if (!deletedOrder) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Order not found" });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: `Order #${deletedOrder.orderId} deleted successfully`,
-    });
   } catch (err) {
     next(err);
   }
 };
 
 /* ==================================
-   Assign delivery
-   logic:
-   - unpaid
-   - not already assigned
-   - within maxDistance
-   - nearest one gets priority
+   DELETE Order
+================================== */
+export const deleteOrder = async (req, res, next) => {
+  try {
+    const deletedOrder = await Order.findByIdAndDelete(req.params.id);
+
+    if (!deletedOrder) {
+      return res.status(404).json({
+        success: false,
+        error: "Order not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Order #${deletedOrder.orderId} deleted successfully`,
+    });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ==================================
+   ASSIGN DELIVERY (Realistic Logic)
+   - Not already assigned
+   - Within maxDistance
+   - Nearest order gets priority
+   - Atomic update (safe)
 ================================== */
 export const assignDelivery = async (req, res, next) => {
   try {
@@ -204,13 +220,27 @@ export const assignDelivery = async (req, res, next) => {
 
     const maxDistance = Number(req.body.maxDistance);
 
-    const availableOrders = await Order.find({
-      isPaid: false,
-      isAssigned: false,
-      deliveryDistance: { $lte: maxDistance },
-    }).sort({ deliveryDistance: 1 });
+    if (!maxDistance || maxDistance <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: "maxDistance must be a positive number",
+      });
+    }
 
-    if (!availableOrders.length) {
+    // Atomic assignment to prevent race conditions
+    const nearestOrder = await Order.findOneAndUpdate(
+      {
+        isAssigned: false,
+        deliveryDistance: { $lte: maxDistance },
+      },
+      { $set: { isAssigned: true } },
+      {
+        new: true,
+        sort: { deliveryDistance: 1 }, // nearest first
+      }
+    );
+
+    if (!nearestOrder) {
       return res.status(200).json({
         success: true,
         assigned: false,
@@ -218,17 +248,13 @@ export const assignDelivery = async (req, res, next) => {
       });
     }
 
-    const nearestOrder = availableOrders[0];
-
-    nearestOrder.isAssigned = true;
-    await nearestOrder.save();
-
     res.status(200).json({
       success: true,
       assigned: true,
       message: `Delivery assigned to Order #${nearestOrder.orderId}`,
       order: nearestOrder,
     });
+
   } catch (err) {
     next(err);
   }
