@@ -15,7 +15,7 @@ const app = express();
 // app.use(cors()); // allows all origins
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://symb-tech.onrender.com']
+  origin: ['http://localhost:5173', 'https://symb-tech.vercel.app']
 }));
 
 app.use(express.json());
